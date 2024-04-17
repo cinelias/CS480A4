@@ -7,10 +7,10 @@
 #include <queue>
 
 #define MAX_REQUESTS 20
-#define MAX_PIZZA_REQUESTS 8
+#define MAX_SANDWICH_REQUESTS 8
 #define MAX_TOTAL_REQUESTS 100
 
-sem_t mutex, empty, full, pizza_sem, barrier;
+sem_t mutex, empty, full, sandwich_sem, barrier;
 DeliveryQueue queue = {0, 0, 0};
 
 void *pizza_producer(void *arg) {
@@ -19,8 +19,8 @@ void *pizza_producer(void *arg) {
         sem_wait(&empty);
         sem_wait(&mutex);
 
-        if (queue.total_requests < MAX_TOTAL_REQUESTS && queue.pizza_requests < MAX_PIZZA_REQUESTS) {
-            queue.pizza_requests++;
+        if (queue.total_requests < MAX_TOTAL_REQUESTS) {
+            queue.DeliveryRequestCount++;
             queue.total_requests++;
             // Log the request added
             RequestAdded added = {Pizza, &queue.total_requests, &queue.pizza_requests};
@@ -39,6 +39,7 @@ void *pizza_producer(void *arg) {
 void *sandwich_producer(void *arg) {
     int sleep_time = *((int *)arg);
     while (1) {
+        sem_wait(&sandwich_sem);
         sem_wait(&empty);
         sem_wait(&mutex);
 
@@ -75,6 +76,7 @@ void *consumer(void *arg) {
             // Log the request removed
             RequestRemoved removed = {DeliveryServiceB, Sandwich, &queue.total_requests, &queue.sandwich_requests};
             log_removed_request(removed);
+            sem_post(&sandwich_sem);
         }
 
         if (queue.total_requests <= 0 && queue.pizza_requests == 0 && queue.sandwich_requests == 0) {
@@ -92,7 +94,7 @@ void *consumer(void *arg) {
 
 int main(int argc, char *argv[]) {
     pthread_t producers[2], consumers[2];
-    int n = 100, a = 0, b = 0, p = 0, s = 0;
+    int n = MAX_TOTAL_REQUESTS, a = 0, b = 0, p = 0, s = 0;
     int opt;
 
     while ((opt = getopt(argc, argv, "n:a:b:p:s:")) != -1) {
@@ -121,7 +123,7 @@ int main(int argc, char *argv[]) {
     sem_init(&mutex, 0, 1);
     sem_init(&empty, 0, MAX_REQUESTS);
     sem_init(&full, 0, 0);
-    sem_init(&pizza_sem, 0, MAX_PIZZA_REQUESTS);
+    sem_init(&sandwich_sem, 0, MAX_SANDWICH_REQUESTS);
     sem_init(&barrier, 0, 0);  // Initialize the barrier semaphore
 
     pthread_create(&producers[0], NULL, pizza_producer, &p);
@@ -133,19 +135,7 @@ int main(int argc, char *argv[]) {
         pthread_join(producers[i], NULL);
     }
 
-    sem_wait(&barrier);  // Main thread waits on the barrier
-
-    for (int i = 0; i < 2; i++) {
-        pthread_join(consumers[i], NULL);
-    }
-
-    sem_destroy(&mutex);
-    sem_destroy(&empty);
-    sem_destroy(&full);
-    sem_destroy(&pizza_sem);
-    sem_destroy(&barrier);
+    sem_wait(&barrier);  // Wait for all requests to be consumed
 
     return 0;
 }
-
-
