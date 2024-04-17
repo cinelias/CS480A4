@@ -13,13 +13,21 @@
 sem_t mutex, empty, full, sandwich_sem, barrier;
 DeliveryQueue queue = {0, 0, 0};
 
+void sleep_based_on_input(int production_time) {
+    // Convert production time from milliseconds to microseconds
+    useconds_t sleep_time = production_time * 1000;
+    usleep(sleep_time);
+}
+
 void *pizza_producer(void *arg) {
-    int sleep_time = *((int *)arg);
+    int *args = (int *)arg;
+    int sleep_time = args[0]; // Extract the sleep time
+    int n = args[1]; // Extract the value of n
     while (1) {
         sem_wait(&empty);
         sem_wait(&mutex);
 
-        if (queue.total_requests < MAX_TOTAL_REQUESTS) {
+        if (queue.total_requests < n) {
             queue.DeliveryRequestCount++;
             queue.total_requests++;
             // Log the request added
@@ -30,20 +38,23 @@ void *pizza_producer(void *arg) {
         sem_post(&mutex);
         sem_post(&full);
 
-        if (queue.total_requests >= MAX_TOTAL_REQUESTS) break;
-        usleep(sleep_time);
+        if (queue.total_requests >= n) break;
+        // Sleep based on the sleep time provided
+        sleep_based_on_input(sleep_time);
     }
     return NULL;
 }
 
 void *sandwich_producer(void *arg) {
-    int sleep_time = *((int *)arg);
+    int *args = (int *)arg;
+    int sleep_time = args[0]; // Extract the sleep time
+    int n = args[1]; // Extract the value of n
     while (1) {
         sem_wait(&sandwich_sem);
         sem_wait(&empty);
         sem_wait(&mutex);
 
-        if (queue.total_requests < MAX_TOTAL_REQUESTS) {
+        if (queue.total_requests < n) {
             queue.sandwich_requests++;
             queue.total_requests++;
             // Log the request added
@@ -54,14 +65,17 @@ void *sandwich_producer(void *arg) {
         sem_post(&mutex);
         sem_post(&full);
 
-        if (queue.total_requests >= MAX_TOTAL_REQUESTS) break;
-        usleep(sleep_time);
+        if (queue.total_requests >= n) break;
+        // Sleep based on the sleep time provided
+        sleep_based_on_input(sleep_time);
     }
     return NULL;
 }
 
 void *consumer(void *arg) {
-    int sleep_time = *((int *)arg);
+    int *args = (int *)arg;
+    int sleep_time = args[0]; // Extract the sleep time
+    int n = args[1]; // Extract the value of n
     while (1) {
         sem_wait(&full);
         sem_wait(&mutex);
@@ -87,7 +101,8 @@ void *consumer(void *arg) {
         sem_post(&empty);
 
         if (queue.total_requests <= 0) break;
-        usleep(sleep_time);
+        // Sleep based on the sleep time provided
+        sleep_based_on_input(sleep_time);
     }
     return NULL;
 }
@@ -120,16 +135,26 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    int producer_args[2] = {p, n}; // Pass sleep time and n to producer threads
+    int consumer_args[2] = {a, n}; // Pass sleep time and n to consumer threads
+
     sem_init(&mutex, 0, 1);
     sem_init(&empty, 0, MAX_REQUESTS);
     sem_init(&full, 0, 0);
     sem_init(&sandwich_sem, 0, MAX_SANDWICH_REQUESTS);
     sem_init(&barrier, 0, 0);  // Initialize the barrier semaphore
 
-    pthread_create(&producers[0], NULL, pizza_producer, &p);
-    pthread_create(&producers[1], NULL, sandwich_producer, &s);
-    pthread_create(&consumers[0], NULL, consumer, &a);
-    pthread_create(&consumers[1], NULL, consumer, &b);
+    // Sleep before creating producer threads
+    sleep_based_on_input(p);
+    pthread_create(&producers[0], NULL, pizza_producer, &producer_args);
+    sleep_based_on_input(s);
+    pthread_create(&producers[1], NULL, sandwich_producer, &producer_args);
+
+    // Sleep before creating consumer threads
+    sleep_based_on_input(a);
+    pthread_create(&consumers[0], NULL, consumer, &consumer_args);
+    sleep_based_on_input(b);
+    pthread_create(&consumers[1], NULL, consumer, &consumer_args);
 
     for (int i = 0; i < 2; i++) {
         pthread_join(producers[i], NULL);
