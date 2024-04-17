@@ -82,12 +82,11 @@ void log_added_request(RequestAdded requestAdded) {
     /* Show what is in the broker request queue */
     printf("Broker: ");
     total = 0;  /* total produced */
-    for (idx=0; idx < RequestTypeN; idx++) {
-        if (idx > 0)
-            printf(" + ");  /* separator */
-        printf("%d %s", requestAdded.inBrokerQueue[idx], producerNames[idx]);
-        total += requestAdded.inBrokerQueue[idx];
-    }
+    printf("%d %s", requestAdded.inBrokerQueue[0], producerNames[0]);
+    total += requestAdded.inBrokerQueue[0];
+    printf(" + %d %s", requestAdded.inBrokerQueue[1], producerNames[1]);
+    total += requestAdded.inBrokerQueue[1];
+
 
     printf(" = %d. ", total);
 
@@ -96,12 +95,13 @@ void log_added_request(RequestAdded requestAdded) {
     /* Show what has been produced */
     total = 0;
     printf(" Produced: ");
-    for (idx=0; idx < RequestTypeN; idx++) {
-        total += requestAdded.produced[idx];  /* track total produced */
-        if (idx > 0)
-            printf(" + ");  /* separator */
-        printf("%d %s", requestAdded.produced[idx], producerNames[idx]);
-    }
+    total += requestAdded.produced[0];
+    printf("%d %s", requestAdded.produced[0], producerNames[0]);
+    total += requestAdded.produced[1];
+    printf(" + %d %s", requestAdded.produced[1], producerNames[1]);
+
+
+
     /* total produced over how long */
     printf(" = %d in %.3f s.\n", total, elapsed_s());
     //printf(" = %d\n", total);

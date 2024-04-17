@@ -18,6 +18,7 @@ int sandwich_produced_flag = 0;
 
 DeliveryQueue queue = {0, 0, 0};
 
+
 void sleep_based_on_input(int production_time) {
     // Convert production time from milliseconds to microseconds
     useconds_t sleep_time = production_time * 1000;
@@ -29,13 +30,8 @@ void *pizza_producer(void *arg) {
     int sleep_time = args[0]; // Extract the sleep time
     int n = args[1];          // Extract the value of n
 
-    // Wait for the signal that sandwich has been produced
-    pthread_mutex_lock(reinterpret_cast<pthread_mutex_t *>(&mutex));
-    while (!sandwich_produced_flag) {
-        pthread_cond_wait(&sandwich_produced, reinterpret_cast<pthread_mutex_t *>(&mutex));
-    }
-    pthread_mutex_unlock(reinterpret_cast<pthread_mutex_t *>(&mutex));
 
+    int * count = 0;
     while (1) {
         sem_wait(&empty);
         sem_wait(&mutex);
@@ -44,11 +40,17 @@ void *pizza_producer(void *arg) {
         if (queue.total_requests < n) {
             queue.DeliveryRequestCount++;
             int DeliveryRequestChecker = queue.DeliveryRequestCount;
+            queue.pizza_requests++;
             queue.total_requests++;
+
             // Log the request added
             int pizzaCheck = queue.pizza_requests;
+
+
+            count++;
             RequestAdded added = {Pizza, &queue.total_requests, &queue.pizza_requests};
             log_added_request(added);
+            printf("--Pizza added into queue w/ %d in there and %d in total! \n", queue.pizza_requests, queue.total_requests);
         }
 
         sem_post(&mutex);
@@ -78,8 +80,10 @@ void *sandwich_producer(void *arg) {
 
             queue.total_requests++;
             // Log the request added
-            RequestAdded added = {Sandwich, &queue.total_requests, &queue.sandwich_requests};
+            int * inqueue = reinterpret_cast<int *>(queue.sandwich_requests + queue.pizza_requests);
+            RequestAdded added = {Sandwich, &queue.total_requests, &queue.sandwich_requests };
             log_added_request(added);
+            printf("--Sandwich added w/ %d in there and %d in total! \n", queue.sandwich_requests, queue.total_requests);
         }
         pthread_mutex_unlock(reinterpret_cast<pthread_mutex_t *>(&mutex)); // Unlock the mutex
 
@@ -117,11 +121,13 @@ void *consumer(void *arg) {
             // Log the request removed
             RequestRemoved removed = {DeliveryServiceA, Pizza, &queue.total_requests, &queue.pizza_requests};
             log_removed_request(removed);
+            printf("--Removed Pizza, w/ %d in there and %d in total deliveries!! \n", queue.pizza_requests, queue.total_requests);
         } else if (queue.sandwich_requests > 0) {
             queue.sandwich_requests--;
             // Log the request removed
             RequestRemoved removed = {DeliveryServiceB, Sandwich, &queue.total_requests, &queue.sandwich_requests};
             log_removed_request(removed);
+            printf("--Removed Sandwich, w/ %d in there and %d in total deliveries!!\n", queue.sandwich_requests, queue.total_requests);
             sem_post(&sandwich_sem);
         }
 
