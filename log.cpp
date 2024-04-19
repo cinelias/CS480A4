@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <time.h>
-
+#include <semaphore.h>
 #include "log.h"
 
 /*
@@ -27,6 +27,8 @@ const char *producerNames[] = {"PIZ", "SAN"};
 
 /* Names of consumer threads */
 const char *consumerNames[] = {"Delivery service A", "Delivery service B"};
+
+extern sem_t mutex;
 
 /* double elapsed_s()
  * show seconds of wall clock time used by the process
@@ -76,42 +78,14 @@ double elapsed_s() {
  * produced and inRequestQueue reflect numbers *after* adding the current request.
  */
 void log_added_request(RequestAdded requestAdded) {
-    int idx;
-    int total;
-
-    /* Show what is in the broker request queue */
-    printf("Broker: ");
-    total = 0;  /* total produced */
-    printf("%d %s", requestAdded.inBrokerQueue[0], producerNames[0]);
-    total += requestAdded.inBrokerQueue[0];
-    printf(" + %d %s", requestAdded.inBrokerQueue[1], producerNames[1]);
-    total += requestAdded.inBrokerQueue[1];
-
-
-    printf(" = %d. ", total);
-
-    printf("Added %s.", producers[requestAdded.type]);
-
-    /* Show what has been produced */
-    total = 0;
-    printf(" Produced: ");
-    total += requestAdded.produced[0];
-    printf("%d %s", requestAdded.produced[0], producerNames[0]);
-    total += requestAdded.produced[1];
-    printf(" + %d %s", requestAdded.produced[1], producerNames[1]);
-
-
-
-    /* total produced over how long */
-    printf(" = %d in %.3f s.\n", total, elapsed_s());
-    //printf(" = %d\n", total);
-
-    /* This is not really needed, but will be helpful for making sure that you
-     * see output prior to a segmentation vioilation.  This is not usually a
-     * good practice as we want to avoid ending the CPU burst premaurely which
-     * this will do, but it is a helpful technique.
-     */
+    sem_wait(&mutex);
+    printf("Broker: %d %s + %d %s = %d. Added %s. Produced: %d %s + %d %s = %d in %.3f s. \n",
+           requestAdded.inBrokerQueue[0], producerNames[0], requestAdded.inBrokerQueue[1], producerNames[1],
+           requestAdded.inBrokerQueue[0] + requestAdded.inBrokerQueue[1], producers[requestAdded.type],
+           requestAdded.produced[0], producerNames[0], requestAdded.produced[1],
+           producerNames[1], requestAdded.produced[0] + requestAdded.produced[1], elapsed_s());
     fflush(stdout);
+    sem_post(&mutex);
 };
 
 /**
@@ -123,6 +97,7 @@ void log_added_request(RequestAdded requestAdded) {
  * Counts reflect numbers *after* the request has been removed
  */
 void log_removed_request(RequestRemoved requestRemoved) {
+    sem_wait(&mutex);
     int idx;
     int total;
 
@@ -160,6 +135,7 @@ void log_removed_request(RequestRemoved requestRemoved) {
      * this will do, but it is a helpful technique.
      */
     fflush(stdout);
+    sem_post(&mutex);
 };
 
 /**

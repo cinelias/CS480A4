@@ -37,6 +37,11 @@ typedef struct {
     unsigned int pizza_requests;
     unsigned int sandwich_requests;
     unsigned int total_requests;
+    unsigned int total_pizzas;
+    unsigned int total_sandwiches;
+    unsigned int broker[20];
+    unsigned int conA[2];
+    unsigned int conB[2];
 } DeliveryQueue;
 
 
@@ -64,12 +69,13 @@ typedef enum Consumers {
 typedef struct {
     // What kind of request was produced?
     RequestType type;
-    // Array of number of requests of each type that have been produced
-    unsigned int *produced;
     // Array of number of requests of each type that are
     // in the request queue and have not yet been consumed.
     // (inBrokerQueue[Pizza] and inBrokerQueue[Sandwich])
     unsigned int *inBrokerQueue;
+
+    // Array of number of requests of each type that have been produced
+    unsigned int *produced;
 } RequestAdded;
 
 typedef struct {
@@ -78,13 +84,13 @@ typedef struct {
     // What kind of request was removed?  As each consumer consumes
     // one type of request, this is the same as the producer.
     RequestType type;
-    // Array of number of requests of each type that have been
-    // consumed.
-    unsigned int *consumed;
     // Array of number of requests of each type that are
     // in the request queue and have not yet been consumed.
     // (inBrokerQueue[Pizza] and inBrokerQueue[Sandwich])
     unsigned int *inBrokerQueue;
+    // Array of number of requests of each type that have been
+    // consumed.
+    unsigned int *consumed;
 } RequestRemoved;
 
 #endif

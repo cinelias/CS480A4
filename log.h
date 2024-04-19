@@ -6,6 +6,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+
+
 /**
  * @brief Show that a request has been added to the request queue and 
  *        print the current status of the broker request queue.
