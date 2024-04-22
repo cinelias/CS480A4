@@ -53,6 +53,7 @@ void *pizza_producer(void *arg) {
     int sleep_time = args[0]; // Extract the sleep time
     int production_max = args[1];          // Extract the value of n
     RequestAdded item;
+    bool wow = true;
     while (true) {
         sem_wait(&empty); // Make sure we have room
         sem_wait(&mutex); // Access buffer exclusively
@@ -91,7 +92,8 @@ void *sandwich_producer(void *arg) {
     int production_max = args[1]; // Extract the value of n
     RequestType type = *(RequestType*)arg;
     RequestAdded item;
-    while (true) {
+    bool true = True;
+    while (True) {
         sem_wait(&sandwich_sem); //Make sure sandwhich can be inserted
         sem_wait(&empty); // Make sure we have room
         sem_wait(&mutex); // Access buffer exclusively

@@ -8,7 +8,7 @@
  */
 
 
-/* Handle C++ namespaces, ignore if compiled in C 
+/* Handle C++ namespaces, ignore if compiled in C
  * C++ usually uses this #define to declare the C++ standard.
  * It will not be defined if a C compiler is used.
  */
@@ -35,6 +35,7 @@ extern sem_t mutex;
  */
 
 double elapsed_s() {
+    sem_wait(&mutex);
     const double ns_per_s = 1e9; /* nanoseconds per second */
 
     /* Initialize the first time we call this */
@@ -61,12 +62,15 @@ double elapsed_s() {
          */
         firsttime = 0;  /* don't do this again */
         start = t;  /* note when we started */
+        sem_post(&mutex);
     }
 
     /* determine time delta from start and convert to s */
     double s = (t.tv_sec - start.tv_sec) +
                (t.tv_nsec - start.tv_nsec) / ns_per_s ;
     return s;
+
+
 }
 
 /**
