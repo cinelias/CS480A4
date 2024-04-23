@@ -1,106 +1,78 @@
 #include <stdio.h>
-#include <pthread.h>
+#include <pthread.h> // Add this line
 #include <semaphore.h>
 #include <unistd.h>
-#include <queue>
-#include <iostream>
 #include "fooddelivery.h"
 #include "log.h"
+#include <queue>
+#include <cstdlib>
 
+#define EXIT_FAILURE -1
 #define MAX_REQUESTS 20
 #define MAX_SANDWICH_REQUESTS 8
 #define MAX_TOTAL_REQUESTS 100
-#define TOTAL_PRODUCERS 2
-#define TOTAL_CONSUMERS 2
+
+/*
+ * Semaphor Usage Break Down:
+ *
+ * mutex: used to access critical section
+ * empty: initialized to the size of the buffer and used to check if there are slots left
+ * full: used to signal that there is at least one item in the buffer that can be consumed.
+ *       It does not necessarily mean that the buffer is full.
+ * sandwich_sem: initialized to the size of 8 and used to check if there are sandwhich slots left in buffer
+ */
 
 typedef struct {
-    unsigned int sleep_time;
+    sem_t mutex, empty, full, sandwich_sem, barrier;
+    std::queue<RequestAdded> buffer;
+    unsigned int inBrokerQueue[RequestTypeN];
+    unsigned int produced[RequestTypeN];
+    unsigned int consumed[ConsumerTypeN];
+    unsigned int totalInQueue;
     unsigned int production_max;
-    ConsumerType type;
-} ConsumerArgs;
+    unsigned int p_sleep;
+    unsigned int s_sleep;
+    unsigned int a_sleep;
+    unsigned int b_sleep;
+    unsigned int itemsLeftToConsume;
+    unsigned int **consumersSummary;
+} SharedData;
 
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-sem_t empty, full, sandwich_sem, barrier;
-std::queue<RequestAdded> buffer;
-unsigned int inBrokerQueue[TOTAL_PRODUCERS] = {0, 0};
-unsigned int produced[TOTAL_PRODUCERS] = {0, 0};
-unsigned int conA[TOTAL_CONSUMERS] = {0, 0};
-unsigned int conB[TOTAL_CONSUMERS] = {0, 0};
-int totalInQueue = 0;
-int totalProduced = 0;
 
-DeliveryQueue queue = {0, 0, 0, 0, 0,
-                       0, {2, 2, 2, 2, 2, 2, 2, 2, 2,
-                           2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2},
-                       {0, 0}, {0, 0}};
-
-pthread_mutex_t time_mutex = PTHREAD_MUTEX_INITIALIZER;
-time_t last_produced_time[TOTAL_PRODUCERS] = {0}; // Track last produced time for each producer
-time_t last_consumed_time[TOTAL_CONSUMERS] = {0}; // Track last consumed time for each consumer
-
-pthread_cond_t pizza_finished = PTHREAD_COND_INITIALIZER;
-bool pizza_active = false;
-
-time_t get_elapsed_time() {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec;
-}
 
 void sleep_based_on_input(int production_time) {
+    // Convert production time from milliseconds to microseconds
     useconds_t sleep_time = production_time * 1000;
     usleep(sleep_time);
 }
 
 void *pizza_producer(void *arg) {
-    int *args = (int *)arg;
-    int sleep_time = args[0];
-    int production_max = args[1];
-    RequestAdded item = {Pizza, inBrokerQueue, produced};
-
+    SharedData *sharedData = (SharedData *)arg;
+    unsigned int sleep_time = sharedData->p_sleep; // Extract the sleep time
+    unsigned int production_max = sharedData->production_max; // Extract the value of n
     while (true) {
-        pthread_mutex_lock(&mutex);
+        sem_wait(&sharedData->empty); // Make sure we have room
+        sem_wait(&sharedData->mutex); // Access buffer exclusively
 
-        // Wait if the buffer queue is full
-        while (totalInQueue >= MAX_REQUESTS) {
-            pthread_mutex_unlock(&mutex);
-            sem_wait(&full); // Wait until a signal is received from consumers
-            pthread_mutex_lock(&mutex);
-        }
-
-        totalProduced++;
-
-        unsigned int total_produced = item.produced[Sandwich] + item.produced[Pizza];
+        // Check if maximum number of items have been produced
+        unsigned int total_produced = sharedData->produced[Sandwich] + sharedData->produced[Pizza];
         if (total_produced >= production_max) {
-            printf("Completed! Production for Pizzas\n");
-            pthread_mutex_unlock(&mutex);
-            sem_post(&full); // Signal full to unblock consumers
+            sem_post(&sharedData->mutex);
+            sem_post(&sharedData->full);
             break;
         }
+        //Increment amount of pizzas in queue
+        sharedData->inBrokerQueue[Pizza]++;
+        //increment total pizzas produced
+        sharedData->produced[Pizza]++;
+        RequestAdded added = {Pizza, sharedData->inBrokerQueue, sharedData->produced};
+        sharedData->totalInQueue++;
+        sharedData->buffer.push(added);
+        log_added_request(added);
 
-        pizza_active = true;
-        pthread_mutex_unlock(&mutex);
 
-        // Produce item
-        RequestAdded item;
-        item.type = Pizza;
-        item.inBrokerQueue = inBrokerQueue;
-        item.produced = produced;
-        item.inBrokerQueue[0]++;
-        item.produced[0]++;
-        buffer.push(item);
-        totalInQueue++;
-        log_added_request(item);
-
-        pthread_mutex_lock(&mutex);
-        pizza_active = false;
-        pthread_cond_signal(&pizza_finished); // Signal that pizza production finished
-        pthread_mutex_unlock(&mutex);
-
-        sem_post(&empty); // Signal empty to indicate item is available to consumers
-
-        // Update last produced time
-        last_produced_time[item.type] = get_elapsed_time();
+        sem_post(&sharedData->mutex); // Release exclusive access to buffer
+        sem_post(&sharedData->full); // Inform consumer
 
         sleep_based_on_input(sleep_time);
     }
@@ -108,199 +80,135 @@ void *pizza_producer(void *arg) {
 }
 
 void *sandwich_producer(void *arg) {
-    int *args = (int *)arg;
-    int sleep_time = args[0];
-    int production_max = args[1];
-    RequestAdded item = {Sandwich, inBrokerQueue, produced};
-
+    SharedData *sharedData = (SharedData *)arg;
+    unsigned int sleep_time = sharedData->s_sleep; // Extract the sleep time
+    unsigned int production_max = sharedData->production_max; // Extract the value of n
+    RequestAdded item;
     while (true) {
-        pthread_mutex_lock(&mutex);
+        sem_wait(&sharedData->sandwich_sem); //Make sure sandwhich can be inserted
+        sem_wait(&sharedData->empty); // Make sure we have room
+        sem_wait(&sharedData->mutex); // Access buffer exclusively
 
-        // Wait if the buffer queue is full
-        while (totalInQueue >= MAX_REQUESTS) {
-            pthread_mutex_unlock(&mutex);
-            sem_wait(&full); // Wait until a signal is received from consumers
-            pthread_mutex_lock(&mutex);
-        }
 
-        totalProduced++;
-
-        unsigned int total_produced = item.produced[Sandwich] + item.produced[Pizza];
+        // Check if maximum number of items have been produced
+        unsigned int total_produced = sharedData->produced[Sandwich] + sharedData->produced[Pizza];
         if (total_produced >= production_max) {
-            printf("Completed! Production for Sandwiches\n");
-            pthread_mutex_unlock(&mutex);
-            sem_post(&full); // Signal full to unblock consumers
+            sem_post(&sharedData->mutex);
+            sem_post(&sharedData->full);
             break;
         }
 
-        // Wait if there are already MAX_SANDWICH_REQUESTS sandwich values in the queue
-        while (item.inBrokerQueue[Sandwich] >= MAX_SANDWICH_REQUESTS) {
-            pthread_mutex_unlock(&mutex);
-            sem_wait(&sandwich_sem); // Wait until a sandwich is consumed
-            pthread_mutex_lock(&mutex);
-        }
+        sharedData->inBrokerQueue[Sandwich]++;
+        sharedData->produced[Sandwich]++;
+        RequestAdded added = {Sandwich, sharedData->inBrokerQueue, sharedData->produced};
+        sharedData->buffer.push(added);
+        sharedData->totalInQueue++;
+        log_added_request(added);
 
-        pthread_mutex_lock(&time_mutex);
-        time_t current_time = get_elapsed_time();
-        while (current_time == last_produced_time[Pizza] && pizza_active) {
-            // Wait until pizza production finishes
-            pthread_cond_wait(&pizza_finished, &mutex);
-        }
-        pthread_mutex_unlock(&time_mutex);
-
-        // Produce item
-        item.inBrokerQueue[Sandwich]++;
-        item.produced[Sandwich]++;
-        buffer.push(item);
-        totalInQueue++;
-        log_added_request(item);
-
-        pthread_mutex_unlock(&mutex);
-        sem_post(&empty); // Signal empty to indicate item is available to consumers
-
-        // Update last produced time
-        last_produced_time[item.type] = get_elapsed_time();
+        //sem_post(&sandwich_sem); //Make sure sandwhich can be inserted
+        sem_post(&sharedData->mutex); // Release exclusive access to buffer
+        sem_post(&sharedData->full); // Inform consumer
+        sem_post(&sharedData->sandwich_sem); //Make sure sandwhich can be inserted
 
         sleep_based_on_input(sleep_time);
     }
     return NULL;
 }
 
+
+// Consumer function
 void* consumer_a(void* arg) {
-    auto* args = (ConsumerArgs*)arg;
-    unsigned int sleep_time = args->sleep_time; // Extract the sleep time
-    unsigned int production_max = args->production_max; // Extract the value of n
-    ConsumerType type = args->type; // Extract the consumer type
+    SharedData *sharedData = (SharedData *)arg;
+    unsigned int sleep_time = sharedData->a_sleep; // Extract the sleep time
+    unsigned int production_max = sharedData->production_max; // Extract the value of n
 
     while (true) {
-        sem_wait(&empty); // Block until something to consume
+        sem_wait(&sharedData->full); // Block until something to consume
+        sem_wait(&sharedData->mutex); // Access buffer exclusively
 
-        pthread_mutex_lock(&mutex); // Lock mutex for buffer access
-
-        // Check if all items have been consumed and buffer is empty
-        if (totalInQueue == 0 && (produced[Pizza] + produced[Sandwich]) >= production_max && buffer.empty()) {
-            printf("Consumer A completed consuming!\n");
-            sem_post(&barrier); // Signal barrier if all requests have been consumed
-            pthread_mutex_unlock(&mutex);
-            return nullptr; // Exit the thread
+        // Check if all items have been consumed
+        if (sharedData->totalInQueue == 0 && sharedData->produced[Pizza] >= production_max
+            && sharedData->produced[Sandwich] >= production_max) {
+            sem_post(&sharedData->mutex);
+            sem_post(&sharedData->empty);
+            break;
         }
 
-        // Wait until there is an item in the buffer or all items have been consumed
-        while (buffer.empty()) {
-            pthread_cond_wait(reinterpret_cast<pthread_cond_t *>(&full), &mutex); // Wait for signal from producers
-            if (totalInQueue == 0 && (produced[Pizza] + produced[Sandwich]) >= production_max && buffer.empty()) {
-                printf("Consumer A completed consuming!\n");
-                sem_post(&barrier); // Signal barrier if all requests have been consumed
-                pthread_mutex_unlock(&mutex); // Release mutex before exiting
-                return nullptr; // Exit the thread
-            }
+        RequestType type = sharedData-> buffer.front().type; // Set request type
+
+        sharedData->inBrokerQueue[type]--;
+        sharedData->consumed[type]++;
+        sharedData->buffer.pop();
+        sharedData->totalInQueue--;
+        sharedData->consumersSummary[DeliveryServiceA][type]++;
+
+
+        // If the consumed item is a sandwich, signal the sandwich semaphore
+        if (type == Sandwich) {
+            sem_post(&sharedData->sandwich_sem);
+        }
+        RequestRemoved removed = {DeliveryServiceA, type, sharedData->inBrokerQueue, sharedData->consumed};
+        log_removed_request(removed);
+        int thingsToConsume = 100;
+
+        if(thingsToConsume == 0){
+            //barrier
         }
 
-        // Consume item
-        RequestAdded item = buffer.front(); // Get the front item
-        buffer.pop(); // Remove the consumed item from the buffer
-
-        // Prepare the removed item
-        RequestRemoved removed_item;
-        removed_item.consumer = type;
-        removed_item.type = item.type;
-        removed_item.inBrokerQueue = inBrokerQueue; // Use the same inBrokerQueue as the added request
-        removed_item.consumed = type == DeliveryServiceA ? conA : conB; // Use the corresponding consumer array for logging
-
-        // Decrement the count of requests in queue
-        if (item.type == Pizza) {
-            removed_item.inBrokerQueue[Pizza]--;
-            removed_item.consumed[Pizza]++;
-        } else {
-            removed_item.inBrokerQueue[Sandwich]--;
-            removed_item.consumed[Sandwich]++;
-            // Signal sandwich semaphore if the consumed item is a sandwich
-            sem_post(&sandwich_sem);
-        }
-        log_removed_request(removed_item);
-
-        totalInQueue--; // Decrement the total in queue
-        sem_post(&full); // Signal full to indicate slot is available for producers
-
-        // Update the last consumed time
-        last_consumed_time[type] = get_elapsed_time();
+        sem_post(&sharedData->empty); // Signal available slot
+        sem_post(&sharedData->mutex); // Release exclusive access to buffer
 
 
-
-        pthread_mutex_unlock(&mutex); // Release exclusive access to buffer
-
-        // Sleep after consuming
         usleep(sleep_time * 1000); // Sleep for sleep_time ms
     }
+    return NULL;
 }
 
 
+
+// Consumer function
 void* consumer_b(void* arg) {
-    auto* args = (ConsumerArgs*)arg;
-    unsigned int sleep_time = args->sleep_time; // Extract the sleep time
-    unsigned int production_max = args->production_max; // Extract the value of n
-    ConsumerType type = args->type; // Extract the consumer type
-
+    SharedData *sharedData = (SharedData *)arg;
+    unsigned int sleep_time = sharedData->b_sleep; // Extract the sleep time
+    unsigned int production_max = sharedData->production_max; // Extract the value of n
     while (true) {
-        sem_wait(&empty); // Block until something to consume
+        sem_wait(&sharedData->full); // Block until something to consume
+        sem_wait(&sharedData->mutex); // Access buffer exclusively
 
-        pthread_mutex_lock(&mutex); // Lock mutex for buffer access
-
-        // Check if all items have been consumed and buffer is empty
-        if (totalInQueue == 0 && (produced[Pizza] + produced[Sandwich]) >= production_max && buffer.empty()) {
-            printf("Consumer B completed consuming!\n");
-            sem_post(&barrier); // Signal barrier if all requests have been consumed
-            pthread_mutex_unlock(&mutex); // Release mutex before exiting
-            return nullptr; // Exit the thread
+        // Check if all items have been consumed
+        if (sharedData->totalInQueue == 0 && sharedData->produced[Pizza]
+                                             >= production_max && sharedData->produced[Sandwich] >= production_max) {
+            sem_post(&sharedData->mutex);
+            sem_post(&sharedData->empty);
+            break;
         }
 
-        // Wait until there is an item in the buffer or all items have been consumed
-        while (buffer.empty()) {
-            pthread_cond_wait(reinterpret_cast<pthread_cond_t *>(&full), &mutex); // Wait for signal from producers
-            if (totalInQueue == 0 && (produced[Pizza] + produced[Sandwich]) >= production_max && buffer.empty()) {
-                printf("Consumer B completed consuming!\n");
-                sem_post(&barrier); // Signal barrier if all requests have been consumed
-                pthread_mutex_unlock(&mutex); // Release mutex before exiting
-                return nullptr; // Exit the thread
-            }
+        RequestType type = sharedData->buffer.front().type; // Set request type
+
+        sharedData->inBrokerQueue[type]--;
+        sharedData->consumed[type]++;
+        sharedData->buffer.pop();
+        sharedData->totalInQueue--;
+        sharedData->consumersSummary[DeliveryServiceB][type]++;
+
+
+        // If the consumed item is a sandwich, signal the sandwich semaphore
+        if (type == Sandwich) {
+            sem_post(&sharedData->sandwich_sem);
         }
+        RequestRemoved removed = {DeliveryServiceB, type, sharedData->inBrokerQueue, sharedData->consumed};
 
-        // Consume item
-        RequestAdded item = buffer.front(); // Get the front item
-        buffer.pop(); // Remove the consumed item from the buffer
+        log_removed_request(removed);
 
-        // Prepare the removed item
-        RequestRemoved removed_item;
-        removed_item.consumer = type;
-        removed_item.type = item.type;
-        removed_item.inBrokerQueue = inBrokerQueue; // Use the same inBrokerQueue as the added request
-        removed_item.consumed = type == DeliveryServiceA ? conA : conB; // Use the corresponding consumer array for logging
+        sem_post(&sharedData->empty); // Signal available slot
+        sem_post(&sharedData->mutex); // Release exclusive access to buffer
 
-        // Decrement the count of requests in queue
-        if (item.type == Pizza) {
-            removed_item.inBrokerQueue[Pizza]--;
-            removed_item.consumed[Pizza]++;
-        } else {
-            removed_item.inBrokerQueue[Sandwich]--;
-            removed_item.consumed[Sandwich]++;
-            // Signal sandwich semaphore if the consumed item is a sandwich
-            sem_post(&sandwich_sem);
-        }
 
-        log_removed_request(removed_item);
-
-        totalInQueue--; // Decrement the total in queue
-        sem_post(&full); // Signal full to indicate slot is available for producers
-
-        // Update the last consumed time
-        last_consumed_time[type] = get_elapsed_time();
-
-        pthread_mutex_unlock(&mutex); // Release exclusive access to buffer
-
-        // Sleep after consuming
         usleep(sleep_time * 1000); // Sleep for sleep_time ms
     }
+    return NULL;
 }
+
 
 
 
@@ -332,51 +240,46 @@ int main(int argc, char *argv[]) {
                 exit(EXIT_FAILURE);
         }
     }
-
     pthread_t producers[2], consumers[2];
-    // Pass sleep time and n to producer threads
-    unsigned int pizza_args[2] = {p, n};
-    unsigned int sandwich_args[2] = {s, n};
 
-    // Pass sleep time, n, and type to consumer threads
-    ConsumerArgs a_args = {a, n, DeliveryServiceA};
-    ConsumerArgs b_args = {b, n, DeliveryServiceB};
+    SharedData sharedData;
+    sharedData.consumersSummary = new unsigned int*[2];
+    for(int i = 0; i < 2; ++i) {
+        sharedData.consumersSummary[i] = new unsigned int[2];
+        for(int j = 0; j < 2; ++j) {
+            sharedData.consumersSummary[i][j] = 0;
+        }
+    }
+    sharedData.inBrokerQueue[0] = 0;
+    sharedData.inBrokerQueue[1] = 0;
+    sharedData.produced[0] = 0;
+    sharedData.produced[1] = 0;
+    sharedData.consumed[0] = 0;
+    sharedData.consumed[1] = 0;
+    sem_init(&sharedData.mutex, 0, 1);
+    sem_init(&sharedData.empty, 0, MAX_REQUESTS);
+    sem_init(&sharedData.full, 0, 0);
+    sem_init(&sharedData.sandwich_sem, 0, MAX_SANDWICH_REQUESTS);
+    sem_init(&sharedData.barrier, 0, 0);
+    sharedData.totalInQueue = 0;
+    sharedData.production_max = n;
+    sharedData.p_sleep = p;
+    sharedData.s_sleep = s;
+    sharedData.a_sleep = a;
+    sharedData.b_sleep = b;
 
 
-    sem_init(&empty, 0, MAX_REQUESTS);
-    sem_init(&full, 0, 0);
-    sem_init(&sandwich_sem, 0, MAX_SANDWICH_REQUESTS);
-    sem_init(&barrier, 0, 1); // Initialize the barrier semaphore with 1
+    pthread_create(&producers[0], NULL, pizza_producer, &sharedData);
+    pthread_create(&producers[1], NULL, sandwich_producer, &sharedData);
+    pthread_create(&consumers[0], NULL, consumer_a, &sharedData);
+    pthread_create(&consumers[1], NULL, consumer_b, &sharedData);
 
-
-
-    pthread_create(&producers[0], NULL, pizza_producer, &pizza_args);
-    sleep_based_on_input(1);
-    pthread_create(&producers[1], NULL, sandwich_producer, &sandwich_args);
-    sleep_based_on_input(1);
-    pthread_create(&consumers[0], NULL, consumer_a, &a_args);
-    sleep_based_on_input(1);
-    pthread_create(&consumers[1], NULL, consumer_b, &b_args);
-    sleep_based_on_input(1);
 
     for (int i = 0; i < 2; i++) {
         pthread_join(producers[i], NULL);
     }
 
-    pthread_join(consumers[0], NULL);
-    pthread_join(consumers[1], NULL);
-
-    sem_wait(&barrier); // Wait for all requests to be consumed
-    unsigned int* consumed[] = {conA, conB};
-
-
-    log_production_history(produced, consumed);
-
-    // Ensure all threads have finished before exiting main
-    sem_destroy(&empty);
-    sem_destroy(&full);
-    sem_destroy(&sandwich_sem);
-    sem_destroy(&barrier);
+    log_production_history(sharedData.produced, sharedData.consumersSummary);
 
     return 0;
 }
