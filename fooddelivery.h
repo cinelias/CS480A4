@@ -32,17 +32,6 @@ extern const char *consumerNames[];
  * one type of requests,
  * so RequestType is synomonous with the producer type
  */
-typedef struct {
-    unsigned int DeliveryRequestCount;
-    unsigned int pizza_requests;
-    unsigned int sandwich_requests;
-    unsigned int total_requests;
-    unsigned int total_pizzas;
-    unsigned int total_sandwiches;
-    unsigned int broker[20];
-    unsigned int conA[2];
-    unsigned int conB[2];
-} DeliveryQueue;
 
 
 typedef enum Requests {
